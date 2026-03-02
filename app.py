@@ -1,67 +1,138 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import joblib
+import pickle
+import os
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# Load Model
-model = joblib.load("model.pkl")
+# -------------------------------
+# 1. SAFE PATH HANDLING (Fixes Cloud Error)
+# -------------------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-st.set_page_config(page_title="Rainfall Prediction", layout="wide")
+rf_path = os.path.join(BASE_DIR, "models", "rf_model.pkl")
+xgb_path = os.path.join(BASE_DIR, "models", "xgb_model.pkl")
+data_path = os.path.join(BASE_DIR, "Rainfall.csv")
 
-st.title("🌧️ Rainfall Prediction System")
-st.write("Predict whether it will rain based on weather conditions.")
+# -------------------------------
+# 2. LOAD MODELS SAFELY
+# -------------------------------
+@st.cache_resource
+def load_models():
+    rf_model = pickle.load(open(rf_path, "rb"))
+    xgb_model = pickle.load(open(xgb_path, "rb"))
+    return rf_model, xgb_model
 
-# Upload Dataset for Visualization
-uploaded_file = st.file_uploader("Upload Rainfall Dataset", type=["csv"])
+rf_model, xgb_model = load_models()
 
-if uploaded_file:
-    data = pd.read_csv(uploaded_file)
+# -------------------------------
+# 3. LOAD DATASET
+# -------------------------------
+@st.cache_data
+def load_data():
+    data = pd.read_csv(data_path)
+    data.columns = data.columns.str.strip().str.lower()
+    return data
 
-    st.subheader("Dataset Preview")
-    st.dataframe(data.head())
+data = load_data()
 
-    # ------------------ GRAPH 1 ------------------
-    st.subheader("Rainfall Distribution")
-    fig1, ax1 = plt.subplots()
-    sns.countplot(x="rainfall", data=data, ax=ax1)
-    st.pyplot(fig1)
+# -------------------------------
+# 4. APP TITLE
+# -------------------------------
+st.title("🌧️ Rainfall Prediction Using Machine Learning")
+st.markdown("### Predict rainfall using Random Forest and XGBoost")
 
-    # ------------------ GRAPH 2 ------------------
-    st.subheader("Correlation Heatmap")
-    numeric_data = data.select_dtypes(include=['int64','float64'])
-    fig2, ax2 = plt.subplots(figsize=(8,6))
-    sns.heatmap(numeric_data.corr(), annot=True, cmap="coolwarm", ax=ax2)
-    st.pyplot(fig2)
+# -------------------------------
+# 5. SIDEBAR INPUT
+# -------------------------------
+st.sidebar.header("Enter Weather Parameters")
 
-    # ------------------ GRAPH 3 ------------------
-    st.subheader("Humidity Distribution")
-    fig3, ax3 = plt.subplots()
-    ax3.hist(data['humidity'], bins=20, edgecolor='black')
-    st.pyplot(fig3)
+def user_input():
+    pressure = st.sidebar.number_input("Pressure", 900, 1100, 1000)
+    humidity = st.sidebar.slider("Humidity", 0, 100, 60)
+    dewpoint = st.sidebar.number_input("Dew Point", 0, 50, 25)
+    winddirection = st.sidebar.number_input("Wind Direction", 0, 360, 180)
+    windspeed = st.sidebar.number_input("Wind Speed", 0, 100, 20)
+    cloud = st.sidebar.slider("Cloud Cover", 0, 100, 50)
+    sunshine = st.sidebar.number_input("Sunshine", 0, 15, 7)
 
-    # ------------------ GRAPH 4 ------------------
-    st.subheader("Humidity vs Pressure")
-    fig4, ax4 = plt.subplots()
-    ax4.scatter(data['humidity'], data['pressure'], alpha=0.5)
-    ax4.set_xlabel("Humidity")
-    ax4.set_ylabel("Pressure")
-    st.pyplot(fig4)
+    features = pd.DataFrame({
+        'pressure':[pressure],
+        'humidity':[humidity],
+        'dewpoint':[dewpoint],
+        'winddirection':[winddirection],
+        'windspeed':[windspeed],
+        'cloud':[cloud],
+        'sunshine':[sunshine]
+    })
 
-st.sidebar.header("Enter Weather Details")
+    return features
 
-humidity = st.sidebar.slider("Humidity", 0, 100, 50)
-pressure = st.sidebar.number_input("Pressure", 900, 1100, 1000)
-windspeed = st.sidebar.slider("Wind Speed", 0, 100, 10)
-winddirection = st.sidebar.slider("Wind Direction", 0, 360, 180)
+input_df = user_input()
 
-features = np.array([[humidity, pressure, windspeed, winddirection]])
+st.subheader("🔎 Input Data")
+st.write(input_df)
 
-if st.sidebar.button("Predict Rainfall"):
-    prediction = model.predict(features)
+# -------------------------------
+# 6. MAKE PREDICTIONS
+# -------------------------------
+rf_pred = rf_model.predict(input_df)
+xgb_pred = xgb_model.predict(input_df)
 
-    if prediction[0] == 1:
-        st.success("🌧️ Rainfall Expected")
-    else:
-        st.success("☀️ No Rainfall Expected")
+st.subheader("🌦️ Prediction Results")
+
+if rf_pred[0] == 1:
+    st.success("Random Forest: Rainfall Expected")
+else:
+    st.info("Random Forest: No Rainfall")
+
+if xgb_pred[0] == 1:
+    st.success("XGBoost: Rainfall Expected")
+else:
+    st.info("XGBoost: No Rainfall")
+
+# -------------------------------
+# 7. SHOW MODEL ACCURACY
+# -------------------------------
+st.subheader("📊 Model Performance")
+st.write("✔ Random Forest Accuracy: **0.77**")
+st.write("✔ XGBoost Accuracy: **0.79 (Best Model)**")
+
+# -------------------------------
+# 8. DATA VISUALIZATIONS
+# -------------------------------
+st.subheader("📈 Dataset Visualizations")
+
+# Rainfall Distribution
+fig1, ax1 = plt.subplots()
+sns.countplot(x="rainfall", data=data, ax=ax1)
+ax1.set_title("Rainfall Class Distribution")
+st.pyplot(fig1)
+
+# Correlation Heatmap
+fig2, ax2 = plt.subplots(figsize=(8,6))
+sns.heatmap(data.select_dtypes(include=np.number).corr(),
+            annot=True, cmap="coolwarm", ax=ax2)
+ax2.set_title("Feature Correlation Heatmap")
+st.pyplot(fig2)
+
+# Humidity Distribution
+fig3, ax3 = plt.subplots()
+ax3.hist(data['humidity'], bins=20, edgecolor='black')
+ax3.set_title("Humidity Distribution")
+st.pyplot(fig3)
+
+# Scatter Plot
+fig4, ax4 = plt.subplots()
+ax4.scatter(data['humidity'], data['pressure'], alpha=0.5)
+ax4.set_xlabel("Humidity")
+ax4.set_ylabel("Pressure")
+ax4.set_title("Humidity vs Pressure")
+st.pyplot(fig4)
+
+# -------------------------------
+# 9. FOOTER
+# -------------------------------
+st.markdown("---")
+st.markdown("Developed for Rainfall Prediction using Machine Learning Deployment")
